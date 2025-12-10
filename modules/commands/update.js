@@ -15,7 +15,31 @@ module.exports.config = {
 };
 
 // REPLACE THIS WITH YOUR RAW REPOSITORY URL
-const REPO_BASE_URL = "https://gitlab.com/priyanshufsdev/priyanshu-fb-bot/-/raw/main/";
+const REPO_BASE_URL = "https://gitlab.com/priyanshufsdev/test/-/raw/main/";
+
+function parseSemver(version) {
+    if (typeof version !== "string") return [0, 0, 0];
+    return version.split(".").map(num => parseInt(num, 10) || 0);
+}
+
+function compareSemver(a, b) {
+    const [aMaj, aMin, aPatch] = parseSemver(a);
+    const [bMaj, bMin, bPatch] = parseSemver(b);
+    if (aMaj !== bMaj) return aMaj - bMaj;
+    if (aMin !== bMin) return aMin - bMin;
+    return aPatch - bPatch;
+}
+
+function normalizeManifest(remoteManifest) {
+    if (!remoteManifest) return [];
+    if (Array.isArray(remoteManifest.versions)) {
+        return remoteManifest.versions.filter(entry => entry?.version && Array.isArray(entry.files));
+    }
+    if (remoteManifest.version && Array.isArray(remoteManifest.files)) {
+        return [remoteManifest];
+    }
+    return [];
+}
 
 module.exports.run = async ({ api, message, args }) => {
     const { threadID, messageID, senderID } = message;
@@ -36,14 +60,32 @@ module.exports.run = async ({ api, message, args }) => {
         const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
         const localVersion = packageJson.version;
 
-        // 3. Compare versions
-        if (remoteManifest.version === localVersion) {
+        const manifestEntries = normalizeManifest(remoteManifest).sort((a, b) => compareSemver(b.version, a.version));
+
+        if (manifestEntries.length === 0) {
+            return api.sendMessage("❌ Remote manifest does not contain any valid versions.", threadID, messageID);
+        }
+
+        const newerEntries = manifestEntries.filter(entry => compareSemver(entry.version, localVersion) > 0);
+
+        if (newerEntries.length === 0) {
             return api.sendMessage(`✅ You are already on the latest version (${localVersion}).`, threadID, messageID);
         }
 
-        // 4. Ask for confirmation
+        const versionsToApply = [...newerEntries].sort((a, b) => compareSemver(a.version, b.version));
+        const filesToUpdate = new Set();
+        versionsToApply.forEach(entry => (entry.files || []).forEach(file => filesToUpdate.add(file)));
+
+        const changelogLines = versionsToApply.map(entry => `• v${entry.version}: ${entry.changelog || "No changelog provided."}`);
+        const updatePlan = {
+            targetVersion: versionsToApply[versionsToApply.length - 1].version,
+            files: Array.from(filesToUpdate),
+            changelogLines
+        };
+
+        // 3. Compare versions already done; ask for confirmation
         const isFullUpdate = args[0] === "full";
-        const msg = `🚀 New version found: ${remoteManifest.version}\n\n📝 Changelog:\n${remoteManifest.changelog}\n\n📂 Files to update: ${remoteManifest.files.length}\n\nReply "yes" to update runtime files.${isFullUpdate ? "\n(This will also push changes to your GitHub repo)" : ""}`;
+        const msg = `🚀 Updates available up to v${updatePlan.targetVersion}\n\n📝 Changes since v${localVersion}:\n${changelogLines.join("\n")}\n\n📂 Files to update: ${updatePlan.files.length}\n\nReply "yes" to update runtime files.${isFullUpdate ? "\n(This will also push changes to your GitHub repo)" : ""}`;
 
         return api.sendMessage(msg, threadID, (err, info) => {
             if (err) return console.error(err);
@@ -53,7 +95,7 @@ module.exports.run = async ({ api, message, args }) => {
                 messageID: info.messageID,
                 command: this.config.name,
                 expectedSender: senderID,
-                data: { remoteManifest, isFullUpdate }
+                data: { updatePlan, isFullUpdate }
             });
             global.client.replies.set(threadID, replies);
         }, messageID);
@@ -66,14 +108,14 @@ module.exports.run = async ({ api, message, args }) => {
 
 module.exports.handleReply = async ({ api, message, replyData }) => {
     const { threadID, messageID, body } = message;
-    const { remoteManifest, isFullUpdate } = replyData;
+    const { updatePlan, isFullUpdate } = replyData;
 
     if (body.toLowerCase() !== "yes") {
         return api.sendMessage("❌ Update cancelled.", threadID, messageID);
     }
 
     api.unsendMessage(message.messageReply.messageID);
-    api.sendMessage(`🔄 Starting ${isFullUpdate ? "FULL" : "RUNTIME"} update to v${remoteManifest.version}...`, threadID, messageID);
+    api.sendMessage(`🔄 Starting ${isFullUpdate ? "FULL" : "RUNTIME"} update to v${updatePlan.targetVersion}...`, threadID, messageID);
 
     try {
         // --- RUNTIME UPDATE ---
@@ -81,7 +123,7 @@ module.exports.handleReply = async ({ api, message, replyData }) => {
         let failedFiles = [];
         let fileContents = {}; // Store content for GitHub push
 
-        for (const fileRelativePath of remoteManifest.files) {
+        for (const fileRelativePath of updatePlan.files) {
             try {
                 const fileUrl = `${REPO_BASE_URL}${fileRelativePath}`;
                 const localFilePath = path.resolve(__dirname, '../../', fileRelativePath);
@@ -118,10 +160,10 @@ module.exports.handleReply = async ({ api, message, replyData }) => {
         // Update local package.json
         const packageJsonPath = path.resolve(__dirname, '../../package.json');
         const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-        packageJson.version = remoteManifest.version;
+        packageJson.version = updatePlan.targetVersion;
         fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 
-        let reportMsg = `✅ Runtime Update Complete!\n🆕 Version: ${remoteManifest.version}\n📂 Updated: ${updatedFiles.length}`;
+        let reportMsg = `✅ Runtime Update Complete!\n🆕 Version: ${updatePlan.targetVersion}\n📂 Updated: ${updatedFiles.length}`;
         if (failedFiles.length > 0) reportMsg += `\n⚠️ Failed: ${failedFiles.length}`;
 
         // --- GITHUB UPDATE (Full Mode) ---
