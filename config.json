@@ -1,16 +1,16 @@
 {
   "mongoURI": "",
-  "ownerID": "100037743553265",
+  "ownerID": "61571151530706",
   "adminIDs": [
-    "100037743553265",
+    "61571151530706",
     "ADMIN_ID_2"
   ],
   "supportIDs": [
-    "100037743553265",
+    "61571151530706",
     "SUPPORT_ID_2"
   ],
-  "adminInboxThreadID": "6567071300016227",
-  "prefix": "/",
+  "adminInboxThreadID": "61571151530706",
+  "prefix": ".",
   "fcaOptions": {
     "forceLogin": false,
     "updatePresence": true,
@@ -24,7 +24,7 @@
     "autoReconnect": true,
     "userAgent": "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 CrKey/1.54.250320"
   },
-  "botNickname": "FB Bot",
+  "botNickname": "𝐂𝐇𝐀𝐍𝐃𝐀",
   "commandEnabled": true,
   "eventEnabled": true,
   "announceImageChange": true,
